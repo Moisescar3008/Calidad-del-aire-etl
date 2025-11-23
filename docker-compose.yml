@@ -1,0 +1,84 @@
+# Docker Compose file for Apache Airflow
+# This file tells Docker how to run multiple applications together
+# Students just need to run: docker-compose up
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  # This is where Airflow stores all its information (DAGs, task history, etc.)
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 5
+    restart: always
+
+  # Airflow Init - Automatically initializes database and creates admin user
+  # This runs once before webserver and scheduler start
+  airflow-init:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    command: >
+      bash -c "airflow db migrate && airflow users create --username airflow --firstname Admin --lastname User --role Admin --email admin@example.com --password airflow || true && echo 'Initialization complete!'"
+    restart: on-failure
+
+  # Airflow Webserver
+  # This is the web interface you see in your browser
+  webserver:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./data:/opt/airflow/data
+    ports:
+      - "8080:8080"
+    command: webserver
+    restart: always
+
+  # Airflow Scheduler  
+  # This is the "brain" that runs your tasks
+  scheduler:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./data:/opt/airflow/data
+    command: scheduler
+    restart: always
+
+# Volumes - This is where Docker stores data permanently
+volumes:
+  postgres_data: 
